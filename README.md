@@ -13,8 +13,10 @@ pytorch version >= 1.8
 The two publicly available multi-modal MR image datasets IXI and BraTS2018 can be downloaded at:
  [[IXI dataset]](https://brain-development.org/ixi-dataset/) and  [[BrainTS dataset]](http://www.braintumorsegmentation.org/).    
 (1) The original data are _**.nii**_ data. Split your data set into training sets, validation sets, and test sets;  
-(2) Read _**.nii**_ data and save these slices as **_.png_** images into two different folders as:
+(2) Read _**.nii**_ data and save these slices as **_.png_** images into two different folders, run:
 ```bash
+python data/read_nii_to_img.py
+
 [T1 folder:]
 000001.png,  000002.png,  000003.png,  000004.png ...
 [T2 folder:]
