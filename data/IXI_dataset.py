@@ -74,6 +74,7 @@ def complex_to_real(data):
     y = torch.complex(y_real, y_imag)
     y = fftshift(y, dim=(-2,-1))  ## (1,1,h,w)
     y = torch.fft.irfft2(y,s=(h,w))
+    # y = torch.fft.ifft2(y,s=(h,w)).abs()
     if len(data.shape)==3:
         y = y[0]
     return y
