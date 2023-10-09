@@ -29,10 +29,6 @@ def create_dataset(dataset_opt, train):
     mode = dataset_opt['mode']
     if mode == 'IXI':
         from data.IXI_dataset import IXI_train as D
-    # elif mode == 'fastmri':
-        # from data.fastmri_dataset import SliceDataset as D
-    elif mode == 'knee':
-        from data.knee_dataset import fastmri_train as D
     elif mode == 'brain':
         from data.brain_dataset import brain_train as D
     else:
