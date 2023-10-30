@@ -139,12 +139,12 @@ class BaseModel(BaseModel):
     def optimize_parameters(self):
         self.optimizer_G.zero_grad()
         if self.modal_1:
-            self.fake_1 = self.netG(self.im1_lr, self.im2_gt, self.mask)
+            self.fake_1 = self.netG(self.im1_lr, self.im2_gt)
             l_pix = self.cri_pix(self.fake_1, self.im1_gt)
             if self.kspace_loss:
                 l_kspace = self.fft_loss(self.fake_1, self.im1_gt, self.mask) * 0.0001
         else:
-            self.fake_2 = self.netG(self.im2_lr, self.im1_gt, self.mask)
+            self.fake_2 = self.netG(self.im2_lr, self.im1_gt)
             l_pix = self.cri_pix(self.fake_2, self.im2_gt)
             if self.kspace_loss:
                 l_kspace = self.fft_loss(self.fake_2, self.im2_gt, self.mask) * 0.0001
@@ -166,9 +166,9 @@ class BaseModel(BaseModel):
         self.netG.eval()
         with torch.no_grad():
             if self.modal_1:
-                self.fake_H = self.netG(self.im1_lr, self.im2_gt, self.mask)
+                self.fake_H = self.netG(self.im1_lr, self.im2_gt)
             else:
-                self.fake_H = self.netG(self.im2_lr, self.im1_gt, self.mask)
+                self.fake_H = self.netG(self.im2_lr, self.im1_gt)
         self.netG.train()
 
     def get_current_log(self):
