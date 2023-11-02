@@ -377,7 +377,7 @@ class ista_unet(nn.Module):
         # starting from the 2nd iteration
         for idx in range(1, self.ista_num_steps):
             err_x = x - self.encoder_dictionary_x(x_list) - self.encoder_dictionary_zx(z_list)
-            err_y = y - self.encoder_dictionary_y(x_list) - self.encoder_dictionary_zy(z_list)
+            err_y = y - self.encoder_dictionary_y(y_list) - self.encoder_dictionary_zy(z_list)
             adj_err_list_x  = self.adjoint_encoder_dictionary_x(err_x)
             adj_err_list_y  = self.adjoint_encoder_dictionary_y(err_y)
             ista_stepsize_x = ista_stepsize_iter_list_x[idx]
