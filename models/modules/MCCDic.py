@@ -2,7 +2,6 @@ from models.modules import common
 import torch.nn as nn
 import torch.nn.functional as F
 import torch
-import numpy as np
 
 def get_all_conv(net, conv_list = []):
 
@@ -276,7 +275,7 @@ class ista_unet(nn.Module):
         self.precond_encoder_dictionary_x = dictionary_model(kernel_size, hidden_layer_width_list, n_classes)
         self.precond_encoder_dictionary_x.load_state_dict(self.encoder_dictionary_x.state_dict())  # initialize with the same atoms
         self.adjoint_encoder_dictionary_x = adjoint_dictionary_model(self.precond_encoder_dictionary_x)    
-        # list to image parameters 
+        # list to image parameters ; for reconstruction
         self.decoder_dictionary_x = dictionary_model(kernel_size, hidden_layer_width_list, n_classes)
         self.decoder_dictionary_x.load_state_dict(self.encoder_dictionary_x.state_dict()) # initialize with the same atoms
 
@@ -286,10 +285,11 @@ class ista_unet(nn.Module):
         # image to list parameters
         self.precond_encoder_dictionary_y = dictionary_model(kernel_size, hidden_layer_width_list, n_classes)
         self.precond_encoder_dictionary_y.load_state_dict(self.encoder_dictionary_y.state_dict())  # initialize with the same atoms
-        self.adjoint_encoder_dictionary_y = adjoint_dictionary_model(self.precond_encoder_dictionary_y)    
-        # list to image parameters 
+        self.adjoint_encoder_dictionary_y = adjoint_dictionary_model(self.precond_encoder_dictionary_y)  
+        # list to image parameters ; for reconstruction 
         self.decoder_dictionary_y = dictionary_model(kernel_size, hidden_layer_width_list, n_classes)
         self.decoder_dictionary_y.load_state_dict(self.encoder_dictionary_y.state_dict()) # initialize with the same atoms
+
 
         # list to image parameters  ----->  z
         self.encoder_dictionary_z = dictionary_model(kernel_size, hidden_layer_width_list, n_classes)
@@ -302,9 +302,10 @@ class ista_unet(nn.Module):
         self.precond_encoder_dictionary_z = dictionary_model(kernel_size, hidden_layer_width_list, n_classes)
         self.precond_encoder_dictionary_z.load_state_dict(self.encoder_dictionary_z.state_dict())  # initialize with the same atoms
         self.adjoint_encoder_dictionary_z = adjoint_dictionary_model(self.precond_encoder_dictionary_z)    
-        # list to image parameters 
-        self.decoder_dictionary_z = dictionary_model(kernel_size, hidden_layer_width_list, n_classes)
-        self.decoder_dictionary_z.load_state_dict(self.encoder_dictionary_z.state_dict()) # initialize with the same atoms
+        # list to image parameters ; for reconstruction 
+        self.decoder_dictionary_z = dictionary_model(kernel_size, hidden_layer_width_list, 2)
+        # self.decoder_dictionary_z.load_state_dict(self.encoder_dictionary_z.state_dict()) # initialize with the same atoms
+      
 
         with torch.no_grad():
             L_x = self.power_iteration_conv_model(self.encoder_dictionary_x, num_simulations = 20)     
@@ -324,42 +325,38 @@ class ista_unet(nn.Module):
         self.ista_stepsize_iter_list_z = [nn.Parameter(torch.ones(1)/L_z) for i in range(ista_num_steps)]
         _lasso_lambda_iter_list_z = [[torch.nn.Parameter(lasso_lambda_scalar * torch.ones(1, width, 1, 1) ) for width in hidden_layer_width_list] for i in range(ista_num_steps)]         
         self.lasso_lambda_iter_list_z =  [item for sublist in _lasso_lambda_iter_list_z for item in sublist]
-
-        self.conv_compress_z = nn.Conv2d(self.n_classes*2, self.n_classes, 3, 1, 1)
-        self.fusion_x = nn.Conv2d(self.n_classes*self.ista_num_steps, self.n_classes, 1)
-        self.fusion_y = nn.Conv2d(self.n_classes*self.ista_num_steps, self.n_classes, 1)
-
-        self.resnet_x = nn.ModuleList([ResidualGroup(conv=common.default_conv, n_feat=self.hidden_layer_width_list[0], kernel_size=3, n_resblocks=1), \
-        ResidualGroup(conv=common.default_conv, n_feat=self.hidden_layer_width_list[1], kernel_size=3, n_resblocks=3), \
-        ResidualGroup(conv=common.default_conv, n_feat=self.hidden_layer_width_list[2], kernel_size=3, n_resblocks=5)])
-
-        self.resnet_y = nn.ModuleList([ResidualGroup(conv=common.default_conv, n_feat=self.hidden_layer_width_list[0], kernel_size=3, n_resblocks=1), \
-        ResidualGroup(conv=common.default_conv, n_feat=self.hidden_layer_width_list[1], kernel_size=3, n_resblocks=3), \
-        ResidualGroup(conv=common.default_conv, n_feat=self.hidden_layer_width_list[2], kernel_size=3, n_resblocks=5)])
-
-        self.resnet_z = nn.ModuleList([ResidualGroup(conv=common.default_conv, n_feat=self.hidden_layer_width_list[0], kernel_size=3, n_resblocks=1), \
-        ResidualGroup(conv=common.default_conv, n_feat=self.hidden_layer_width_list[1], kernel_size=3, n_resblocks=3), \
-        ResidualGroup(conv=common.default_conv, n_feat=self.hidden_layer_width_list[2], kernel_size=3, n_resblocks=5)])
     
+        
+        self.layer_in_x = nn.Conv2d(1, n_classes, 3, 1, 1)
+        self.layer_in_y = nn.Conv2d(1, n_classes, 3, 1, 1)
+        self.layer_in_z = nn.Conv2d(2, n_classes, 3, 1, 1)
         self.relu = nn.ReLU()
+        self.cpmpress_z = nn.Conv2d(n_classes*2, n_classes, 3, 1, 1)
+        self.rec_x_unique = nn.Conv2d(n_classes, 1, 3, 1, 1)
+        self.rec_y_unique = nn.Conv2d(n_classes, 1, 3, 1, 1)
+        self.HFF_fuse_x = nn.Conv2d(n_classes*(ista_num_steps-1), n_classes, 1, 1)
+        self.HFF_fuse_y = nn.Conv2d(n_classes*(ista_num_steps-1), n_classes, 1, 1)
+
     def forward(self, x, y, z):
-        hierarchical_x = [x]
-        hierarchical_y = [y]
+        HFF_x = []
+        HFF_y = []
+
         # learned hyper-params
         ista_stepsize_iter_list_x = self.ista_stepsize_iter_list_x
         lasso_lambda_iter_list_x =  self.lasso_lambda_iter_list_x 
         ista_stepsize_iter_list_y = self.ista_stepsize_iter_list_y
         lasso_lambda_iter_list_y =  self.lasso_lambda_iter_list_y 
         ista_stepsize_iter_list_z = self.ista_stepsize_iter_list_z
-        lasso_lambda_iter_list_z =  self.lasso_lambda_iter_list_z     
-        ## initialize 
-        # first iteration
-        err_x = x
-        adj_err_list_x  = self.adjoint_encoder_dictionary_x(err_x)
-        err_y = y
-        adj_err_list_y  = self.adjoint_encoder_dictionary_y(err_y)
-        err_z = z
-        adj_err_list_z  = self.adjoint_encoder_dictionary_z(err_z)
+        lasso_lambda_iter_list_z =  self.lasso_lambda_iter_list_z 
+
+
+        ## initialize MS feature: x_list, y_list, z_list
+        x_in = self.layer_in_x(x)
+        y_in = self.layer_in_y(y)
+        z_in = self.layer_in_z(z)
+        adj_err_list_x  = self.adjoint_encoder_dictionary_x(x_in)
+        adj_err_list_y  = self.adjoint_encoder_dictionary_y(y_in)
+        adj_err_list_z  = self.adjoint_encoder_dictionary_z(z_in)
         x_list = []
         y_list = []
         z_list = []
@@ -374,42 +371,52 @@ class ista_unet(nn.Module):
             lambd_z = ista_stepsize_z *  lasso_lambda_iter_list_z[i]
             z_list.append(relu(ista_stepsize_z.to(z.device) * adj_err_list_z[i], lambd = lambd_z.to(z.device)))
 
+        ## calculate x*DT and y*HT
+        xD_list = adj_err_list_x
+        yH_list = adj_err_list_y
+
         # starting from the 2nd iteration
         for idx in range(1, self.ista_num_steps):
-            err_x = x - self.encoder_dictionary_x(x_list) - self.encoder_dictionary_zx(z_list)
-            err_y = y - self.encoder_dictionary_y(y_list) - self.encoder_dictionary_zy(z_list)
+            err_x = self.encoder_dictionary_x(x_list) + self.encoder_dictionary_zx(z_list)
+            err_y = self.encoder_dictionary_y(y_list) + self.encoder_dictionary_zy(z_list)
             adj_err_list_x  = self.adjoint_encoder_dictionary_x(err_x)
             adj_err_list_y  = self.adjoint_encoder_dictionary_y(err_y)
             ista_stepsize_x = ista_stepsize_iter_list_x[idx]
             ista_stepsize_y = ista_stepsize_iter_list_y[idx]
             for i in range(self.num_layers):
-                x_list[i] = x_list[i] + ista_stepsize_x.to(x.device) * adj_err_list_x[i]
-                y_list[i] = y_list[i] + ista_stepsize_y.to(y.device) * adj_err_list_y[i]
-                x_list[i] = self.resnet_x[i](self.relu(x_list[i]))
-                y_list[i] = self.resnet_y[i](self.relu(y_list[i]))
+                x_list[i] = x_list[i] - ista_stepsize_x.to(x.device) * (adj_err_list_x[i] - xD_list[i])
+                y_list[i] = y_list[i] - ista_stepsize_y.to(y.device) * (adj_err_list_y[i] - yH_list[i])
+                x_list[i] = self.relu(x_list[i])
+                y_list[i] = self.relu(y_list[i])
             
-            current_x = self.decoder_dictionary_x(x_list)
-            x_hat = x - current_x
-            current_y = self.decoder_dictionary_y(y_list)
-            y_hat = y - current_y
-
-            hierarchical_x.append(current_x)
-            hierarchical_y.append(current_y)
+            x_cur_unique = self.decoder_dictionary_x(x_list)
+            HFF_x.append(x_cur_unique)
+            x_cur_common = x_in - x_cur_unique
+            y_cur_unique = self.decoder_dictionary_y(y_list)
+            HFF_y.append(y_cur_unique)
+            y_cur_common = y_in - y_cur_unique
             
-            z = self.conv_compress_z(torch.cat([x_hat, y_hat], 1))
+            z = self.cpmpress_z(torch.cat([x_cur_common, y_cur_common], 1))
             
-            err_z = z - self.encoder_dictionary_z(z_list)
+            err_z = self.encoder_dictionary_z(z_list) - z
             adj_err_list_z  = self.adjoint_encoder_dictionary_z(err_z)
             ista_stepsize_z = ista_stepsize_iter_list_z[idx]
             for i in range(self.num_layers):
-                z_list[i] = z_list[i] + ista_stepsize_z.to(z.device) * adj_err_list_z[i]
-                z_list[i] = self.resnet_z[i](self.relu(z_list[i]))
+                z_list[i] = z_list[i] - ista_stepsize_z.to(z.device) * adj_err_list_z[i]
+                z_list[i] = self.relu(z_list[i])
+        
+        ## reconstruction, channel = 64
+        x_unique = self.HFF_fuse_x(torch.cat(HFF_x, 1))
+        y_unique = self.HFF_fuse_y(torch.cat(HFF_y, 1))   
+        common = self.decoder_dictionary_z(z_list)
+       
+        x_unique = self.rec_x_unique(x_unique)
+        y_unique = self.rec_y_unique(y_unique)
 
-        x_final = self.fusion_x(torch.cat(hierarchical_x, 1))
-        y_final = self.fusion_y(torch.cat(hierarchical_y, 1))
-        z_final = self.decoder_dictionary_z(z_list)
+        x_rec = common[:,0:1] + x_unique
+        y_rec = common[:,1:] + y_unique
 
-        return x_final, y_final, z_final
+        return x_rec, y_rec
 
 
     def initialize_sparse_codes(self, x, rand_bool = False):
@@ -486,28 +493,13 @@ class MCCDic(nn.Module):
 
         self.in_channel = 1
         self.channel_fea = 64
-
-        self.layer_in_x = nn.Conv2d(self.in_channel, self.channel_fea, 3, 1, 1)
-        self.layer_in_y = nn.Conv2d(self.in_channel, self.channel_fea, 3, 1, 1)
-        self.layer_in_z = nn.Conv2d(self.in_channel*2, self.channel_fea, 3, 1, 1)
-
-        self.pedict_ista = ista_unet(kernel_size=3, hidden_layer_width_list=[128, 96, 64], n_classes=self.channel_fea, ista_num_steps=6)
-
+        self.predict_ista = ista_unet(kernel_size=3, hidden_layer_width_list=[128, 96, 64], n_classes=self.channel_fea, ista_num_steps=5)
         self.decoder = decoder(self.in_channel, self.channel_fea)
-
 
     def forward(self, x, y):
         x_orig = x
         y_orig = y
-        # initialize
-        x_in = self.layer_in_x(x)
-        y_in = self.layer_in_y(y)
-        z_in = self.layer_in_z(torch.cat([x,y], 1))
-        # iteration
-        x_unique, y_unique, z_common = self.pedict_ista(x_in, y_in, z_in)
-        # reconstruction
-        x_rec = self.decoder(torch.cat([x_unique, z_common], 1))
-        y_rec = self.decoder(torch.cat([y_unique, z_common], 1))
+        x_rec, y_rec = self.predict_ista(x, y, torch.cat([x,y], 1))
 
         x_rec = x_rec + x_orig
         y_rec = y_rec + y_orig
@@ -516,6 +508,9 @@ class MCCDic(nn.Module):
         # return x_rec
 
    
+
+
+
 
 
 
