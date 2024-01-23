@@ -2,6 +2,9 @@ from models.modules import common
 import torch.nn as nn
 import torch.nn.functional as F
 import torch
+import numpy as np
+from pytorch_wavelets import DWTForward, DWTInverse
+from data.IXI_dataset import complex_to_real, real_to_complex
 
 def get_all_conv(net, conv_list = []):
 
@@ -325,6 +328,18 @@ class ista_unet(nn.Module):
         self.ista_stepsize_iter_list_z = [nn.Parameter(torch.ones(1)/L_z) for i in range(ista_num_steps)]
         _lasso_lambda_iter_list_z = [[torch.nn.Parameter(lasso_lambda_scalar * torch.ones(1, width, 1, 1) ) for width in hidden_layer_width_list] for i in range(ista_num_steps)]         
         self.lasso_lambda_iter_list_z =  [item for sublist in _lasso_lambda_iter_list_z for item in sublist]
+
+        self.resnet_x = nn.ModuleList([ResidualGroup(conv=common.default_conv, n_feat=self.hidden_layer_width_list[0], kernel_size=3, n_resblocks=1), \
+        ResidualGroup(conv=common.default_conv, n_feat=self.hidden_layer_width_list[1], kernel_size=3, n_resblocks=3), \
+        ResidualGroup(conv=common.default_conv, n_feat=self.hidden_layer_width_list[2], kernel_size=3, n_resblocks=5)])
+
+        self.resnet_y = nn.ModuleList([ResidualGroup(conv=common.default_conv, n_feat=self.hidden_layer_width_list[0], kernel_size=3, n_resblocks=1), \
+        ResidualGroup(conv=common.default_conv, n_feat=self.hidden_layer_width_list[1], kernel_size=3, n_resblocks=3), \
+        ResidualGroup(conv=common.default_conv, n_feat=self.hidden_layer_width_list[2], kernel_size=3, n_resblocks=5)])
+
+        self.resnet_z = nn.ModuleList([ResidualGroup(conv=common.default_conv, n_feat=self.hidden_layer_width_list[0], kernel_size=3, n_resblocks=1), \
+        ResidualGroup(conv=common.default_conv, n_feat=self.hidden_layer_width_list[1], kernel_size=3, n_resblocks=3), \
+        ResidualGroup(conv=common.default_conv, n_feat=self.hidden_layer_width_list[2], kernel_size=3, n_resblocks=5)])
     
         
         self.layer_in_x = nn.Conv2d(1, n_classes, 3, 1, 1)
@@ -386,8 +401,8 @@ class ista_unet(nn.Module):
             for i in range(self.num_layers):
                 x_list[i] = x_list[i] - ista_stepsize_x.to(x.device) * (adj_err_list_x[i] - xD_list[i])
                 y_list[i] = y_list[i] - ista_stepsize_y.to(y.device) * (adj_err_list_y[i] - yH_list[i])
-                x_list[i] = self.relu(x_list[i])
-                y_list[i] = self.relu(y_list[i])
+                x_list[i] = self.resnet_x[i](self.relu(x_list[i]))
+                y_list[i] = self.resnet_y[i](self.relu(y_list[i]))
             
             x_cur_unique = self.decoder_dictionary_x(x_list)
             HFF_x.append(x_cur_unique)
@@ -403,11 +418,11 @@ class ista_unet(nn.Module):
             ista_stepsize_z = ista_stepsize_iter_list_z[idx]
             for i in range(self.num_layers):
                 z_list[i] = z_list[i] - ista_stepsize_z.to(z.device) * adj_err_list_z[i]
-                z_list[i] = self.relu(z_list[i])
+                z_list[i] = self.resnet_z[i](self.relu(z_list[i]))
         
         ## reconstruction, channel = 64
         x_unique = self.HFF_fuse_x(torch.cat(HFF_x, 1))
-        y_unique = self.HFF_fuse_y(torch.cat(HFF_y, 1))   
+        y_unique = self.HFF_fuse_y(torch.cat(HFF_y, 1)) 
         common = self.decoder_dictionary_z(z_list)
        
         x_unique = self.rec_x_unique(x_unique)
@@ -487,27 +502,48 @@ class decoder(nn.Module):
         rec = self.conv_2(self.relu(self.conv_1(x)))
         return rec
 
-class MCCDic(nn.Module):
-    def __init__(self):
-        super(MCCDic, self).__init__()
+class MCUNet(nn.Module):
+    def __init__(self, dwt):
+        super(MCUNet, self).__init__()
 
         self.in_channel = 1
         self.channel_fea = 64
-        self.predict_ista = ista_unet(kernel_size=3, hidden_layer_width_list=[128, 96, 64], n_classes=self.channel_fea, ista_num_steps=5)
+        self.dwt_in = dwt
+
+        self.predict_ista = ista_unet(kernel_size=3, hidden_layer_width_list=[128, 96, 64], n_classes=self.channel_fea, ista_num_steps=6)
+
         self.decoder = decoder(self.in_channel, self.channel_fea)
 
-    def forward(self, x, y):
+    def data_consistency_layer(self, generated, X_k, mask):
+
+        gene_complex = real_to_complex(generated)
+        output_complex = X_k + gene_complex * (1.0 - mask)
+        output_img = complex_to_real(output_complex)
+        
+        return output_img
+
+    def forward(self, x, y, mask):
         x_orig = x
         y_orig = y
         x_rec, y_rec = self.predict_ista(x, y, torch.cat([x,y], 1))
 
+        # # # DC layer
+        # x_k = real_to_complex(x_orig)
+        # y_k = real_to_complex(y_orig)
+        # x_rec = self.data_consistency_layer(x_rec, x_k, mask)
+        # y_rec = self.data_consistency_layer(y_rec, y_k, mask)
+
         x_rec = x_rec + x_orig
         y_rec = y_rec + y_orig
 
-        return x_rec, y_rec
-        # return x_rec
+        # return x_rec, y_rec
+        return x_rec
 
    
+
+
+
+
 
 
 
