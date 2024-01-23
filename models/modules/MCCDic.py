@@ -501,7 +501,7 @@ class decoder(nn.Module):
         return rec
 
 class MCCDic(nn.Module):
-    def __init__(self, dwt):
+    def __init__(self):
         super(MCCDic, self).__init__()
 
         self.in_channel = 1
