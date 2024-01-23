@@ -139,36 +139,29 @@ class BaseModel(BaseModel):
     def optimize_parameters(self):
         self.optimizer_G.zero_grad()
         if self.modal_1:
-            self.fake_1 = self.netG(self.im1_lr, self.im2_gt)
-            l_pix = self.cri_pix(self.fake_1, self.im1_gt)
-            if self.kspace_loss:
-                l_kspace = self.fft_loss(self.fake_1, self.im1_gt, self.mask) * 0.0001
+        #     self.fake_1 = self.netG(self.im1_lr, self.im2_gt)
+        #     l_pix = self.cri_pix(self.fake_1, self.im1_gt)
+            self.fake_1, self.fake_2 = self.netG(self.im1_lr, self.im2_gt)
+            l_pix = self.cri_pix(self.fake_1, self.im1_gt) + 0.1 * self.cri_pix(self.fake_2, self.im2_gt)
         else:
-            self.fake_2 = self.netG(self.im2_lr, self.im1_gt)
-            l_pix = self.cri_pix(self.fake_2, self.im2_gt)
-            if self.kspace_loss:
-                l_kspace = self.fft_loss(self.fake_2, self.im2_gt, self.mask) * 0.0001
-
-        if self.kspace_loss:
-            total_loss = l_pix + l_kspace
-            total_loss.backward()
-            self.optimizer_G.step()
-            self.log_dict['l_pix'] = l_pix.item()
-            self.log_dict['l_fft'] = l_kspace.item()
-        else:
-            total_loss = l_pix
-            total_loss.backward()
-            self.optimizer_G.step()
-            self.log_dict['l_pix'] = l_pix.item()
+            # self.fake_2 = self.netG(self.im2_lr, self.im1_gt)
+            # l_pix = self.cri_pix(self.fake_2, self.im2_gt)
+            self.fake_2, self.fake_1 = self.netG(self.im2_lr, self.im1_gt)
+            l_pix = self.cri_pix(self.fake_2, self.im2_gt) + 0.1 * self.cri_pix(self.fake_1, self.im1_gt)
+            
+        total_loss = l_pix
+        total_loss.backward()
+        self.optimizer_G.step()
+        self.log_dict['l_pix'] = l_pix.item()
 
 
     def test(self):
         self.netG.eval()
         with torch.no_grad():
             if self.modal_1:
-                self.fake_H = self.netG(self.im1_lr, self.im2_gt)
+                self.fake_H, _ = self.netG(self.im1_lr, self.im2_gt)
             else:
-                self.fake_H = self.netG(self.im2_lr, self.im1_gt)
+                self.fake_H, _ = self.netG(self.im2_lr, self.im1_gt)
         self.netG.train()
 
     def get_current_log(self):
