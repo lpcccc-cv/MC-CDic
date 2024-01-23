@@ -507,7 +507,7 @@ class MCCDic(nn.Module):
         self.in_channel = 1
         self.channel_fea = 64
 
-        self.predict_ista = ista_unet(kernel_size=3, hidden_layer_width_list=[128, 96, 64], n_classes=self.channel_fea, ista_num_steps=6)
+        self.predict_ista = ista_unet(kernel_size=3, hidden_layer_width_list=[128, 96, 64], n_classes=self.channel_fea, ista_num_steps=5)
 
         self.decoder = decoder(self.in_channel, self.channel_fea)
 
