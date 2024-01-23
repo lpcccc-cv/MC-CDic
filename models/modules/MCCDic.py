@@ -511,7 +511,7 @@ class MCCDic(nn.Module):
 
         self.decoder = decoder(self.in_channel, self.channel_fea)
 
-    def forward(self, x, y, mask):
+    def forward(self, x, y):
         x_orig = x
         y_orig = y
         x_rec, y_rec = self.predict_ista(x, y, torch.cat([x,y], 1))
