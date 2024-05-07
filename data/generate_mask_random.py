@@ -11,7 +11,7 @@ def temp_seed(rng, seed):
         yield
     finally:
         rng.set_state(state)
-def mask_func_random_unique(shape, acc = 4, seed=42):
+def mask_func_random_unique(shape, acc = 8, seed=42):
     """
     Args:
     shape:[320, 320, 2]
@@ -25,8 +25,12 @@ def mask_func_random_unique(shape, acc = 4, seed=42):
     rng = np.random
     with temp_seed(rng, seed):
         num_cols = shape[-2]
-        if acc == 4:
-            center_fraction, acceleration = 0.08, 2#中心采样比例，加速比
+        if acc == 2:
+            center_fraction, acceleration = 0.1, 2#中心采样比例，加速比
+        elif acc == 4:
+            center_fraction, acceleration = 0.08, 4#中心采样比例，加速比
+        elif acc == 6:
+            center_fraction, acceleration = 0.06, 6#中心采样比例，加速比
         elif acc == 8:
             center_fraction, acceleration = 0.04, 8#中心采样比例，加速比
         else:
@@ -50,6 +54,30 @@ def mask_func_random_unique(shape, acc = 4, seed=42):
         mask = mask.repeat(shape[0], 1, 1)   
     return mask[:, :, 0]
 
-mask = mask_func_random_unique([240, 240, 2])
-print(mask.shape)
-cv2.imwrite('./mask_x4_brain.png', mask.numpy()*255)
+###### generate mask for reconstruction ####
+# control shape and acc to generate different masks
+mask = mask_func_random_unique(shape=[240, 240, 2],acc=8)
+cv2.imwrite('./mask_x8_brain.png', mask.numpy()*255)
+
+###### generate mask for SR ######
+def gen_mask_for_SR(size, scale):
+    h,w = size
+    mask = torch.zeros(size)
+    lr_h = h//scale
+    lr_w = w//scale
+    top_left_h = h//2-lr_h//2
+    top_left_w = w//2-lr_w//2
+    mask[top_left_h:(top_left_h+lr_h), top_left_w:(top_left_w+lr_w)] = torch.ones(lr_h,lr_w)
+    return mask
+
+##### directly crop K-space data to get the LR image ######
+# data: K-space data
+# scale: down sampling scale
+def crop_k_data(data, scale):
+    _,h,w = data.shape
+    lr_h = h//scale
+    lr_w = w//scale
+    top_left_h = h//2-lr_h//2
+    top_left_w = w//2-lr_w//2
+    croped_data = data[:, top_left_h:(top_left_h+lr_h), top_left_w:(top_left_w+lr_w)]
+    return croped_data/scale**2
